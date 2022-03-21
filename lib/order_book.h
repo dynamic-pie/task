@@ -22,8 +22,8 @@ public:
     void InitLevels(const BidAsk& bidAsk) noexcept {
         std::copy_n(std::make_move_iterator(bidAsk.Bids_.begin()), MaxLevelCount_, CurrentBids_.begin());
         std::copy_n(std::make_move_iterator(bidAsk.Asks_.begin()), MaxLevelCount_, CurrentAsks_.begin());
-        UpdateBestAsk();
-        UpdateBestBid();
+        UpdateBestAsk(CurrentAsks_, &BestAskIndex_, FreeAsksIndex_);
+        UpdateBestBid(CurrentBids_, &BestBidIndex_, FreeBidsIndex_);
         CurrentEventTime_ = bidAsk.EventTime_;
     }
 
@@ -46,17 +46,15 @@ public:
         for (const auto& bid : bidAsk.Bids_) {
             AddBid(bid);
         }
-        UpdateBestAsk();
-        UpdateBestBid();
         CurrentEventTime_ = bidAsk.EventTime_;
     }
 
     void AddBid(const PriceAmount& priceAmount) {
-        AddOrder(priceAmount, &BestBidIndex_, &NeedToUpdateBestBid_, &CurrentBids_, &FreeBidsIndex_, Greater);
+        AddOrder(priceAmount, &BestBidIndex_, &CurrentBids_, &FreeBidsIndex_, Greater, UpdateBestBid);
     }
 
     void AddAsk(const PriceAmount& priceAmount) {
-        AddOrder(priceAmount, &BestAskIndex_, &NeedToUpdateBestAsk_, &CurrentAsks_, &FreeAsksIndex_, Less);
+        AddOrder(priceAmount, &BestAskIndex_, &CurrentAsks_, &FreeAsksIndex_, Less, UpdateBestAsk);
     }
 
     void Dump(std::ostream& stream) {
@@ -68,13 +66,13 @@ public:
     }
 
 private:
-    template<class Comparator>
+    template<class Comparator, class Updater>
     void AddOrder(const PriceAmount& priceAmount,
                   size_t* bestIndex,
-                  bool* needToUpdateFlag,
                   std::array<PriceAmount, MAX_CONTAINER_SIZE>* data,
                   size_t* freeIndex,
-                  Comparator cmp) {
+                  Comparator cmp,
+                  Updater updater) {
         bool zeroAmount = fabs(priceAmount.Amount_ - 0.0) < AmountEpsilon_;
         if (EqualPrice(priceAmount, data->at(*bestIndex)) && !zeroAmount) {
             data->at(*bestIndex).Amount_ = priceAmount.Amount_;
@@ -84,12 +82,14 @@ private:
             if (EqualPrice(data->at(it), priceAmount)) {
                 if (zeroAmount) {
                     if (EqualPrice(priceAmount, data->at(*bestIndex))) {
-                        *needToUpdateFlag = true;
+                        std::swap(data->at(it), data->at(--*freeIndex));
+                        updater(*data, bestIndex, *freeIndex);
+                    } else {
+                        if (*freeIndex - 1 == *bestIndex) {
+                            *bestIndex = it;
+                        }
+                        std::swap(data->at(it), data->at(--*freeIndex));
                     }
-                    if (*freeIndex - 1 == *bestIndex) {
-                        *bestIndex = it;
-                    }
-                    std::swap(data->at(it), data->at(--*freeIndex));
                 } else {
                     data->at(it).Amount_ = priceAmount.Amount_;
                     if (EqualPrice(priceAmount, data->at(*bestIndex))) {
@@ -117,25 +117,16 @@ private:
         return a.Price_ < b.Price_;
     }
 
-    void UpdateBestAsk() {
-        if (NeedToUpdateBestAsk_) {
-            BestAskIndex_ = std::min_element(CurrentAsks_.begin(), CurrentAsks_.begin() + FreeAsksIndex_, Less) - CurrentAsks_.begin();
-            NeedToUpdateBestAsk_ = false;
-        }
+    static void UpdateBestAsk(const std::array<PriceAmount, MAX_CONTAINER_SIZE>& data, size_t* bestIndex, const size_t freeIndex) {
+        *bestIndex = std::min_element(data.begin(), data.begin() + freeIndex, Less) - data.begin();
     }
 
-    void UpdateBestBid() {
-        if (NeedToUpdateBestBid_) {
-            BestBidIndex_ = std::max_element(CurrentBids_.begin(), CurrentBids_.begin() + FreeBidsIndex_, Less) - CurrentBids_.begin();
-            NeedToUpdateBestBid_ = false;
-        }
+    static void UpdateBestBid(const std::array<PriceAmount, MAX_CONTAINER_SIZE>& data, size_t* bestIndex, const size_t freeIndex) {
+        *bestIndex = std::max_element(data.begin(), data.begin() + freeIndex, Less) - data.begin();
     }
 
     std::array<PriceAmount, MAX_CONTAINER_SIZE> CurrentBids_;
     std::array<PriceAmount, MAX_CONTAINER_SIZE> CurrentAsks_;
-
-    bool NeedToUpdateBestAsk_ = true;
-    bool NeedToUpdateBestBid_ = true;
 
     size_t BestAskIndex_ = 0;
     size_t BestBidIndex_ = 0;
