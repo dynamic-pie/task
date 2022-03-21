@@ -26,7 +26,7 @@ static void BM_FullOrderBookUpdate_80K(benchmark::State& state) {
     inputData.close();
 
     for (auto _: state) {
-        OrderBook orderBook(20, 0.01f);
+        OrderBook orderBook(20, 0.01f, 1e-12f);
         orderBook.InitLevels(startState);
         for (auto&& bidAsk: bidAsks) {
             orderBook.Update(bidAsk);
@@ -55,14 +55,14 @@ static void BM_SingleOrderBookUpdate(benchmark::State& state) {
     }
     inputData.close();
 
-    OrderBook orderBook(20, 0.01f);
+    OrderBook orderBook(20, 0.01f, 1e-12f);
     orderBook.InitLevels(startState);
     size_t index = 0;
     for (auto _: state) {
         orderBook.Update(bidAsks[index++]);
         if (index >= bidAsks.size()) {
             index = 0;
-            orderBook = OrderBook(20, 0.01f);
+            orderBook = OrderBook(20, 0.01f, 1e-12f);
             orderBook.InitLevels(startState);
         }
     }

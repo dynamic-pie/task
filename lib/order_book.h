@@ -2,18 +2,19 @@
 
 #include <vector>
 #include <algorithm>
-#include <unordered_set>
 #include <array>
 #include <sstream>
+#include <cmath>
 #include "base.h"
 
 #define MAX_CONTAINER_SIZE 256
 
 class OrderBook {
 public:
-    OrderBook(int maxLevelCount, double priceEpsilon)
+    OrderBook(int maxLevelCount, double priceEpsilon, double amountEpsilon)
     : MaxLevelCount_(maxLevelCount)
     , PriceEpsilon_(priceEpsilon)
+    , AmountEpsilon_(amountEpsilon)
     , FreeAsksIndex_(maxLevelCount)
     , FreeBidsIndex_(maxLevelCount)
     {}
@@ -21,18 +22,17 @@ public:
     void InitLevels(const BidAsk& bidAsk) noexcept {
         std::copy_n(std::make_move_iterator(bidAsk.Bids_.begin()), MaxLevelCount_, CurrentBids_.begin());
         std::copy_n(std::make_move_iterator(bidAsk.Asks_.begin()), MaxLevelCount_, CurrentAsks_.begin());
-
-        BestAsk_ = bidAsk.Asks_.front();
-        BestBid_ = bidAsk.Bids_.front();
+        UpdateBestAsk();
+        UpdateBestBid();
         CurrentEventTime_ = bidAsk.EventTime_;
     }
 
     PriceAmount GetBestBid() noexcept {
-        return BestBid_;
+        return CurrentBids_[BestBidIndex_];
     }
 
     PriceAmount GetBestAsk() noexcept {
-        return BestAsk_;
+        return CurrentAsks_[BestAskIndex_];
     }
 
     int64_t GetCurrentEventTime() const noexcept {
@@ -46,26 +46,17 @@ public:
         for (const auto& bid : bidAsk.Bids_) {
             AddBid(bid);
         }
-        auto cmp = [](const PriceAmount& a, const PriceAmount& b) {
-            return a.Price_ < b.Price_;
-        };
-        if (NeedToUpdateBestAsk_) {
-            BestAsk_ = *std::min_element(CurrentAsks_.begin(), CurrentAsks_.begin() + FreeAsksIndex_, cmp);
-            NeedToUpdateBestAsk_ = false;
-        }
-        if (NeedToUpdateBestBid_) {
-            BestBid_ = *std::max_element(CurrentBids_.begin(), CurrentBids_.begin() + FreeBidsIndex_, cmp);
-            NeedToUpdateBestBid_ = false;
-        }
+        UpdateBestAsk();
+        UpdateBestBid();
         CurrentEventTime_ = bidAsk.EventTime_;
     }
 
     void AddBid(const PriceAmount& priceAmount) {
-        AddOrder(priceAmount, &BestBid_, &NeedToUpdateBestBid_, &CurrentBids_, &FreeBidsIndex_, BidCmp);
+        AddOrder(priceAmount, &BestBidIndex_, &NeedToUpdateBestBid_, &CurrentBids_, &FreeBidsIndex_, Greater);
     }
 
     void AddAsk(const PriceAmount& priceAmount) {
-        AddOrder(priceAmount, &BestAsk_, &NeedToUpdateBestAsk_, &CurrentAsks_, &FreeAsksIndex_, AskCmp);
+        AddOrder(priceAmount, &BestAskIndex_, &NeedToUpdateBestAsk_, &CurrentAsks_, &FreeAsksIndex_, Less);
     }
 
     void Dump(std::ostream& stream) {
@@ -79,58 +70,81 @@ public:
 private:
     template<class Comparator>
     void AddOrder(const PriceAmount& priceAmount,
-                  PriceAmount* bestOrder,
+                  size_t* bestIndex,
                   bool* needToUpdateFlag,
                   std::array<PriceAmount, MAX_CONTAINER_SIZE>* data,
                   size_t* freeIndex,
                   Comparator cmp) {
+        bool zeroAmount = fabs(priceAmount.Amount_ - 0.0) < AmountEpsilon_;
+        if (EqualPrice(priceAmount, data->at(*bestIndex)) && !zeroAmount) {
+            data->at(*bestIndex).Amount_ = priceAmount.Amount_;
+            return;
+        }
         for (size_t it = 0; it < *freeIndex; ++it) {
             if (EqualPrice(data->at(it), priceAmount)) {
-                data->at(it).Amount_ = priceAmount.Amount_;
-                if (data->at(it).Amount_ == 0) {
-                    std::swap(data->at(it), data->at(--(*freeIndex)));
-                } else {
-                    if (cmp(priceAmount, *bestOrder) || EqualPrice(priceAmount, *bestOrder)) {
-                        bestOrder->Amount_ = priceAmount.Amount_;
-                        bestOrder->Price_ = priceAmount.Price_;
+                if (zeroAmount) {
+                    if (EqualPrice(priceAmount, data->at(*bestIndex))) {
+                        *needToUpdateFlag = true;
                     }
-                }
-                if (EqualPrice(priceAmount, *bestOrder) && priceAmount.Amount_ == 0) {
-                    *needToUpdateFlag = true;
+                    if (*freeIndex - 1 == *bestIndex) {
+                        *bestIndex = it;
+                    }
+                    std::swap(data->at(it), data->at(--*freeIndex));
+                } else {
+                    data->at(it).Amount_ = priceAmount.Amount_;
+                    if (EqualPrice(priceAmount, data->at(*bestIndex))) {
+                        *bestIndex = it;
+                    }
                 }
                 return;
             }
         }
-        data->at((*freeIndex)++) = priceAmount;
-        if (cmp(priceAmount, *bestOrder)) {
-            *bestOrder = priceAmount;
+        if (cmp(priceAmount, data->at(*bestIndex))) {
+            *bestIndex = *freeIndex;
         }
+        data->at((*freeIndex)++) = priceAmount;
     }
 
     bool EqualPrice(const PriceAmount& a, const PriceAmount& b) noexcept {
         return fabs(a.Price_ - b.Price_) < PriceEpsilon_;
     }
 
-    static bool BidCmp(const PriceAmount& a, const PriceAmount& b) {
+    static bool Greater(const PriceAmount& a, const PriceAmount& b) {
         return a.Price_ > b.Price_;
     }
 
-    static bool AskCmp(const PriceAmount& a, const PriceAmount& b) {
+    static bool Less(const PriceAmount& a, const PriceAmount& b) {
         return a.Price_ < b.Price_;
+    }
+
+    void UpdateBestAsk() {
+        if (NeedToUpdateBestAsk_) {
+            BestAskIndex_ = std::min_element(CurrentAsks_.begin(), CurrentAsks_.begin() + FreeAsksIndex_, Less) - CurrentAsks_.begin();
+            NeedToUpdateBestAsk_ = false;
+        }
+    }
+
+    void UpdateBestBid() {
+        if (NeedToUpdateBestBid_) {
+            BestBidIndex_ = std::max_element(CurrentBids_.begin(), CurrentBids_.begin() + FreeBidsIndex_, Less) - CurrentBids_.begin();
+            NeedToUpdateBestBid_ = false;
+        }
     }
 
     std::array<PriceAmount, MAX_CONTAINER_SIZE> CurrentBids_;
     std::array<PriceAmount, MAX_CONTAINER_SIZE> CurrentAsks_;
-    PriceAmount BestBid_;
-    PriceAmount BestAsk_;
 
-    bool NeedToUpdateBestAsk_ = false;
-    bool NeedToUpdateBestBid_ = false;
+    bool NeedToUpdateBestAsk_ = true;
+    bool NeedToUpdateBestBid_ = true;
+
+    size_t BestAskIndex_ = 0;
+    size_t BestBidIndex_ = 0;
 
     int64_t CurrentEventTime_ = 0;
 
     int MaxLevelCount_ = 0;
     double PriceEpsilon_ = 0;
+    double AmountEpsilon_ = 0;
 
     size_t FreeAsksIndex_ = 0;
     size_t FreeBidsIndex_ = 0;

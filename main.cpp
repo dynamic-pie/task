@@ -15,11 +15,11 @@ int main() {
         std::cerr << "File could not be opened: " << (!inputData ? inputFilePath : outputFilePath) << std::endl;
         exit(1);
     }
-    OrderBook orderBook(20, 0.01f);
+    OrderBook orderBook(20, 0.01f, 1e-12f);
     std::string line;
     getline(inputData, line);
     orderBook.InitLevels(Parser::GetBidAsk(line));
-    outputData << std::setprecision(6) << std::fixed;
+    outputData << std::setprecision(std::numeric_limits<double>::max_digits10) << std::fixed;
 
     while (getline(inputData, line)) {
         BidAsk bidAsk = Parser::GetBidAsk(line);
