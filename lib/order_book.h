@@ -74,27 +74,24 @@ private:
                   Comparator cmp,
                   Updater updater) {
         bool zeroAmount = fabs(priceAmount.Amount_ - 0.0) < AmountEpsilon_;
-        if (EqualPrice(priceAmount, data->at(*bestIndex)) && !zeroAmount) {
-            data->at(*bestIndex).Amount_ = priceAmount.Amount_;
+        if (EqualPrice(priceAmount, data->at(*bestIndex))) {
+            if (!zeroAmount) {
+                data->at(*bestIndex).Amount_ = priceAmount.Amount_;
+            } else {
+                std::swap(data->at(*bestIndex), data->at(--*freeIndex));
+                updater(*data, bestIndex, *freeIndex);
+            }
             return;
         }
         for (size_t it = 0; it < *freeIndex; ++it) {
             if (EqualPrice(data->at(it), priceAmount)) {
                 if (zeroAmount) {
-                    if (EqualPrice(priceAmount, data->at(*bestIndex))) {
-                        std::swap(data->at(it), data->at(--*freeIndex));
-                        updater(*data, bestIndex, *freeIndex);
-                    } else {
-                        if (*freeIndex - 1 == *bestIndex) {
-                            *bestIndex = it;
-                        }
-                        std::swap(data->at(it), data->at(--*freeIndex));
-                    }
-                } else {
-                    data->at(it).Amount_ = priceAmount.Amount_;
-                    if (EqualPrice(priceAmount, data->at(*bestIndex))) {
+                    if (*freeIndex - 1 == *bestIndex) {
                         *bestIndex = it;
                     }
+                    std::swap(data->at(it), data->at(--*freeIndex));
+                } else {
+                    data->at(it).Amount_ = priceAmount.Amount_;
                 }
                 return;
             }
